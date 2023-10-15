@@ -1,1 +1,1 @@
-web: streamlit run streamlit_app.py --server.port $PORT
+web: streamlit run uncertainty.py --server.port $PORT

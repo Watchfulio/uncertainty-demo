@@ -2,6 +2,8 @@
 
 **Decoding LLM Uncertainties for Better Predictability**
 
+You can find a live version of the demo [here](https://uncertainty.demos.watchful.io/)
+
 ## Quickstart 
 
 ```bash

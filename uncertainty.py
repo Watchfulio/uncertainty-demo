@@ -356,6 +356,8 @@ with col1:
     st.markdown(
     """
     This is a demo of several metrics that can be used to evaluate the uncertainty of an LLM's responses.
+
+    You can read more details about it in [this blog post](https://www.watchful.io/blog/decoding-llm-uncertainties-for-better-predictability)
     
     * Conceptual uncertainty measures how sure the model is about what to say. 
     * Structural uncertainty measures how sure the model is about how to say it.
@@ -427,4 +429,3 @@ if submit_button or st.session_state.display_restored_data:
 
     display_metrics_and_charts(uncertainty_scores, completions, n) 
     st.session_state.display_restored_data = False
-

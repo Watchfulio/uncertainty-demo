@@ -4,11 +4,11 @@
 
 You can find a live version of the demo [here](https://uncertainty.demos.watchful.io/)
 
-## Quickstart 
+## Quickstart
 
 ```bash
 pip install -r requirements.txt
 OPENAI_API_KEY=<KEY> OPENAI_ORGANIZATION=<ORG> streamlit run uncertainty.py
 ```
 
-For more information, refer to the [blog post](https://watchful.io)
+For more information, refer to the [blog post](https://www.watchful.io/blog/decoding-llm-uncertainties-for-better-predictability)

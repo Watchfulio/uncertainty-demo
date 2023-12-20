@@ -1,5 +1,5 @@
 ---
-name: 'deploy-gpu'
+name: 'deploy'
 
 # yamllint disable-line rule:truthy
 on:

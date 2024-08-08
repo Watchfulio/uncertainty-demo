@@ -195,7 +195,7 @@ async def update_status(status_text, message):
     stop=stop_after_attempt(4),
 )
 async def get_embedding(input_text):
-    aclient = AsyncOpenAI(api_key=os.getenv("OPENAI_KEY", "Not found"))
+    aclient = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", "Not found"))
 
     resp = await aclient.embeddings.create(input=input_text, model="text-embedding-ada-002")
     embedding_data = resp.to_dict()
@@ -426,7 +426,7 @@ with col2:
 if submit_button or st.session_state.display_restored_data:
     if submit_button:
         status_text.text("Creating Completions...")
-        client = OpenAI(api_key=os.getenv("OPENAI_KEY", "Not found"))
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY", "Not found"))
         completions = client.completions.create(temperature=1,
                                            n=n,
                                            logprobs=n_logprobs,

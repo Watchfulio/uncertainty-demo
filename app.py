@@ -1,21 +1,38 @@
 import asyncio
 from asyncio import Lock
-import altair as alt
-import openai
-import numpy as np
+from itertools import combinations
 import logging
 import os
 import uuid
-from tenacity import retry
-from itertools import combinations
+
+import altair as alt
+from dotenv import load_dotenv
+import numpy as np
+from openai import OpenAI, AsyncOpenAI
+import pandas as pd
+import plotly.graph_objects as go
 from sklearn.metrics.pairwise import cosine_similarity
 from streamlit_extras.add_vertical_space import add_vertical_space
-import plotly.graph_objects as go
-import pandas as pd
 import streamlit as st
+from tenacity import (
+    after_log,
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
-openai.api_key = os.getenv("OPENAI_API_KEY", "Not found")
-openai.organization = os.getenv("OPENAI_ORGANIZATION", "Not found")
+load_dotenv()
+
+# Configure root logger to capture only WARN or higher level logs
+logging.basicConfig(
+    level=logging.WARNING, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+
+# Configure logger to capture INFO-level logs
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 def display_metrics_and_charts(uncertainty_scores, completions, n):
     structural_uncertainty = np.mean([np.mean(x) for x in uncertainty_scores['entropies']])
@@ -24,22 +41,22 @@ def display_metrics_and_charts(uncertainty_scores, completions, n):
     st.text(f"Overall Cosine Distance Between Choices: {uncertainty_scores['mean_choice_distance']}")
     st.text(f"Overall Structural Uncertainty: {structural_uncertainty}")
     st.text(f"Overall Conceptual Uncertainty: {conceptual_uncertainty}")
-    
+
     logger.debug(f"PROMPT: {user_input}\nSTRUCTURAL UNCERTAINTY: {structural_uncertainty}\nCONCEPTUAL UNCERTAINTY: {conceptual_uncertainty}")
     add_vertical_space(5)
 
     # Create columns for each choice
     cols = st.columns(n)
-    
+
     for i in range(n):
-        choice_text = completions['choices'][i]['text']
+        choice_text = completions.choices[i].text
         entropies = uncertainty_scores['entropies'][i]
         distances = uncertainty_scores['distances'][i]
-        logprobs = completions['choices'][i]['logprobs']['top_logprobs']
+        logprobs = completions.choices[i].logprobs.top_logprobs
         mean_entropy = np.mean(entropies)
         mean_distance = np.mean(distances)
 
-        tokens = completions['choices'][i]['logprobs']['tokens']
+        tokens = completions.choices[i].logprobs.tokens
 
         if choice_text != ''.join(tokens):
             print("RESPONSE TEXT AND TOKENS DO NOT MATCH")
@@ -169,29 +186,40 @@ async def update_status(status_text, message):
     status_text.text(message)
     await asyncio.sleep(0.1)  # Sleep to allow Streamlit to update the UI
 
-@retry
+@retry(
+    reraise=True,
+    before_sleep=before_sleep_log(logger, logging.INFO),
+    after=after_log(logger, logging.INFO),
+    wait=wait_exponential(multiplier=1, min=1, max=8),
+    retry=retry_if_exception_type(ZeroDivisionError),
+    stop=stop_after_attempt(4),
+)
 async def get_embedding(input_text):
-    response = await openai.Embedding.acreate(input=input_text, model="text-embedding-ada-002")
-    return np.array(response['data'][0]['embedding'])
+    aclient = AsyncOpenAI(api_key=os.getenv("OPENAI_KEY", "Not found"))
+
+    resp = await aclient.embeddings.create(input=input_text, model="text-embedding-ada-002")
+    embedding_data = resp.to_dict()
+
+    return np.array(embedding_data['data'][0]['embedding'])
 
 def calculate_normalized_entropy(logprobs):
     """
     Calculate the normalized entropy of a list of log probabilities.
-    
+
     Parameters:
         logprobs (list): List of log probabilities.
-        
+
     Returns:
         float: Normalized entropy.
     """
 
     # Calculate raw entropy
     entropy = -np.sum(np.exp(logprobs) * logprobs)
-    
+
     # Calculate maximum possible entropy for N tokens sampled
     N = len(logprobs)
     max_entropy = np.log(N)
-    
+
     # Normalize the entropy
     normalized_entropy = entropy/max_entropy
     return normalized_entropy
@@ -199,55 +227,55 @@ def calculate_normalized_entropy(logprobs):
 async def process_token_async(i, top_logprobs_list, choice, choice_embedding, max_tokens):
     """
     Asynchronously process a token to calculate its normalized entropy and mean cosine distance.
-    
+
     Parameters:
         i (int): Token index.
         top_logprobs_list (list): List of top log probabilities for each token.
         choice (dict): The choice containing log probabilities and tokens.
         choice_embedding (array): Embedding of the full choice.
         max_tokens (int or None): Maximum number of tokens to consider for the partial string.
-        
+
     Returns:
         tuple: Mean cosine distance and normalized entropy for the token.
     """
     top_logprobs = top_logprobs_list[i]
     normalized_entropy = calculate_normalized_entropy(list(top_logprobs.values()))
-    
+
     tasks = []
 
     # Loop through each sampled token to construct partial strings and calculate embeddings
     for sampled_token in top_logprobs:
         tokens_to_use = choice['logprobs']['tokens'][:i] + [sampled_token]
-        
+
         # Limit the number of tokens in the partial string if max_tokens is specified
         if max_tokens is not None and len(tokens_to_use) > max_tokens:
             tokens_to_use = tokens_to_use[-max_tokens:]
         constructed_string = ''.join(tokens_to_use)
         task = get_embedding(constructed_string)
         tasks.append(task)
-        
+
     embeddings = await asyncio.gather(*tasks)
-    
+
     cosine_distances = []
 
     # Calculate cosine distances between embeddings of partial strings and the full choice
     for new_embedding in embeddings:
         cosine_sim = cosine_similarity(new_embedding.reshape(1, -1), choice_embedding.reshape(1, -1))[0][0]
         cosine_distances.append(1 - cosine_sim)
-        
+
     mean_distance = np.mean(cosine_distances)
-    
+
     return mean_distance, normalized_entropy
 
 async def calculate_uncertainty(response_object, max_tokens=None, status_text=None):
     """
     Asynchronously calculate uncertainty metrics for a given response object.
-    
+
     Parameters:
         response_object (dict): The response object containing multiple choices.
         max_tokens (int or None): Maximum number of tokens to consider for the partial string.
         status_text (str or None): Optional status text for progress updates.
-        
+
     Returns:
         dict: Dictionary containing lists of entropies, distances, and the mean choice-level distance.
     """
@@ -256,28 +284,28 @@ async def calculate_uncertainty(response_object, max_tokens=None, status_text=No
     entropies = []
     distances = []
     choice_embeddings = []
-    
+
     # Initialize counters and lock for task synchronization
     total_tasks = len(response_object['choices'])  # Total number of choices
     completed_tasks = 0  # Counter for completed tasks
     lock = Lock()  # Lock to synchronize updates to the counter and progress bar
-    
+
     pbar = st.progress(0)  # Initialize Streamlit progress bar
-    
+
     # Pre-calculate embeddings for each choice in the response object
     if status_text:
         await update_status(status_text, "Pre-calculating choice embeddings...")
     choice_embedding_tasks = [get_embedding(choice['text']) for choice in response_object['choices']]
     choice_embeddings = await asyncio.gather(*choice_embedding_tasks)
-    
+
     async def process_choice(choice, choice_embedding):
         """
         Asynchronously process a single choice to calculate its mean cosine distances and normalized entropies.
-        
+
         Parameters:
             choice (dict): The choice containing log probabilities and tokens.
             choice_embedding (array): Embedding of the full choice.
-            
+
         Returns:
             tuple: Lists of mean cosine distances and normalized entropies for the choice.
         """
@@ -287,53 +315,44 @@ async def calculate_uncertainty(response_object, max_tokens=None, status_text=No
         top_logprobs_list = choice['logprobs']['top_logprobs']
         mean_cosine_distances = []
         normalized_entropies = []
-        
+
         tasks = [process_token_async(i, top_logprobs_list, choice, choice_embedding, max_tokens) for i in range(len(top_logprobs_list))]
         results = await asyncio.gather(*tasks)
-        
+
         for mean_distance, normalized_entropy in results:
             mean_cosine_distances.append(mean_distance)
             normalized_entropies.append(normalized_entropy)
-        
+
         async with lock:  # Acquire lock to update shared state
             completed_tasks += 1  # Update the counter
             pbar.progress(completed_tasks / total_tasks)  # Update the progress bar
-        
+
         return mean_cosine_distances, normalized_entropies
-    
+
     if status_text:
         await update_status(status_text, "Processing choices... This may take a while depending on how many tokens are in each choice.")
     choice_tasks = [process_choice(choice, emb) for choice, emb in zip(response_object['choices'], choice_embeddings)]
     results = await asyncio.gather(*choice_tasks)
-    
+
     if status_text:
         await update_status(status_text, "Calculating distances and entropies...")
     for mean_cosine_distances, normalized_entropies in results:
         distances.append(mean_cosine_distances)
-        entropies.append(normalized_entropies) 
-    
+        entropies.append(normalized_entropies)
+
     # Calculate the mean cosine distance between all pairs of choices
     choice_distances = []
     for emb1, emb2 in combinations(choice_embeddings, 2):
         cosine_sim = cosine_similarity(emb1.reshape(1, -1), emb2.reshape(1, -1))[0][0]
         choice_distances.append(1 - cosine_sim)
     mean_choice_distance = np.mean(choice_distances)
-    
-    await update_status(status_text, "") 
+
+    await update_status(status_text, "")
     return {'entropies': entropies, 'distances': distances, 'mean_choice_distance': mean_choice_distance}
 
 n = 5
 n_logprobs = 5
 max_tokens = 500
-
-# Configure root logger to capture only WARN or higher level logs
-logging.basicConfig(
-    level=logging.WARNING, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-
-# Configure logger to capture INFO-level logs
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
 
 # Set page layout
 st.set_page_config(layout='wide', page_title="LLM Uncertainty", page_icon=":mag:")
@@ -358,8 +377,8 @@ with col1:
     This is a demo of several metrics that can be used to evaluate the uncertainty of an LLM's responses.
 
     You can read more details about it in [this blog post](https://www.watchful.io/blog/decoding-llm-uncertainties-for-better-predictability)
-    
-    * Conceptual uncertainty measures how sure the model is about what to say. 
+
+    * Conceptual uncertainty measures how sure the model is about what to say.
     * Structural uncertainty measures how sure the model is about how to say it.
 
     Numbers closer to 1 indicate higher uncertainty, while highly certain outputs will be close to 0.
@@ -380,7 +399,7 @@ with col2:
         structural_uncertainty = np.mean([np.mean(x) for x in item['uncertainty_scores']['entropies']])
         conceptual_uncertainty = (0.5*item['uncertainty_scores']['mean_choice_distance']) + (0.5*np.mean([np.mean(x) for x in item['uncertainty_scores']['distances']]))
         mean_choice_distance = item['uncertainty_scores']['mean_choice_distance']
-        
+
         # Create a row for each history element
         row_cols = st.columns([2, 1, 1, 1, 1])
         with row_cols[0]:
@@ -393,13 +412,13 @@ with col2:
             st.write(f"CU: {conceptual_uncertainty:.2f}")
         with row_cols[4]:
             st.session_state.restore_clicks[index] = st.button(f"Restore", key=f"restore_{unique_key}")
-    
+
     for index, clicked in enumerate(st.session_state.restore_clicks):
         if clicked:
                 st.session_state.display_restored_data = True
                 st.session_state.user_input = st.session_state.history[index]['prompt']
                 uncertainty_scores = st.session_state.history[index]['uncertainty_scores']
-                completions = st.session_state.history[index]['completions']
+                completions = st.session_state.history[index].completions
                 st.session_state.restore_clicks[index] = False
 
 
@@ -407,14 +426,15 @@ with col2:
 if submit_button or st.session_state.display_restored_data:
     if submit_button:
         status_text.text("Creating Completions...")
-        completions = openai.Completion.create(temperature=1,
+        client = OpenAI(api_key=os.getenv("OPENAI_KEY", "Not found"))
+        completions = client.completions.create(temperature=1,
                                            n=n,
                                            logprobs=n_logprobs,
-                                           model="gpt-3.5-turbo-instruct", 
+                                           model="gpt-3.5-turbo-instruct",
                                            max_tokens=max_tokens,
                                            prompt=user_input)
-        uncertainty_scores = asyncio.run(calculate_uncertainty(completions, max_tokens=8191, status_text=status_text))
-        unique_key = str(uuid.uuid4())   
+        uncertainty_scores = asyncio.run(calculate_uncertainty(completions.to_dict(), max_tokens=8191, status_text=status_text))
+        unique_key = str(uuid.uuid4())
         st.session_state.history.append({
             'key': unique_key,
             'prompt': user_input,
@@ -427,5 +447,5 @@ if submit_button or st.session_state.display_restored_data:
             st.session_state.history.pop(0)
             st.session_state.restore_clicks.pop(0)
 
-    display_metrics_and_charts(uncertainty_scores, completions, n) 
+    display_metrics_and_charts(uncertainty_scores, completions, n)
     st.session_state.display_restored_data = False

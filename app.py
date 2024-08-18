@@ -330,7 +330,7 @@ async def calculate_uncertainty(response_object, max_tokens=None, status_text=No
         return mean_cosine_distances, normalized_entropies
 
     if status_text:
-        await update_status(status_text, "Processing choices... This may take a while depending on how many tokens are in each choice.")
+        await update_status(status_text, "Processing choices. This may take a while...")
     choice_tasks = [process_choice(choice, emb) for choice, emb in zip(response_object['choices'], choice_embeddings)]
     results = await asyncio.gather(*choice_tasks)
 

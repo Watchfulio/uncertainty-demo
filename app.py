@@ -368,7 +368,7 @@ if 'restore_clicks' not in st.session_state:
     st.session_state.restore_clicks = []
 
 # Create columns for prompt input and history
-col1, col2 = st.columns([2, 1])
+col1, col2 = st.columns(2, gap="large")
 
 with col1:
     st.title("Model Uncertainty Scoring")
@@ -415,11 +415,11 @@ with col2:
 
     for index, clicked in enumerate(st.session_state.restore_clicks):
         if clicked:
-                st.session_state.display_restored_data = True
-                st.session_state.user_input = st.session_state.history[index]['prompt']
-                uncertainty_scores = st.session_state.history[index]['uncertainty_scores']
-                completions = st.session_state.history[index].completions
-                st.session_state.restore_clicks[index] = False
+            st.session_state.display_restored_data = True
+            st.session_state.user_input = st.session_state.history[index]['prompt']
+            uncertainty_scores = st.session_state.history[index]['uncertainty_scores']
+            completions = st.session_state.history[index]["completions"]
+            st.session_state.restore_clicks[index] = False
 
 
 # Submit button right below the text box

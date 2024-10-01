@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 import numpy as np
 from openai import OpenAI, AsyncOpenAI
 import pandas as pd
+from PIL import Image
 import plotly.graph_objects as go
 from sklearn.metrics.pairwise import cosine_similarity
 from streamlit_extras.add_vertical_space import add_vertical_space
@@ -33,6 +34,12 @@ logging.basicConfig(
 # Configure logger to capture INFO-level logs
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+favicon = Image.open("images/favicon.ico")
+
+# Set page layout
+st.set_page_config(layout='wide', page_title="LLM Uncertainty", page_icon=favicon)
+st.logo("images/thoughworks_logo.png")
 
 def display_metrics_and_charts(uncertainty_scores, completions, n):
     structural_uncertainty = np.mean([np.mean(x) for x in uncertainty_scores['entropies']])
@@ -353,9 +360,6 @@ async def calculate_uncertainty(response_object, max_tokens=None, status_text=No
 n = 5
 n_logprobs = 5
 max_tokens = 500
-
-# Set page layout
-st.set_page_config(layout='wide', page_title="LLM Uncertainty", page_icon=":mag:")
 
 # Initialize session state for history if it doesn't exist
 if 'history' not in st.session_state:

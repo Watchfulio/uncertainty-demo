@@ -39,7 +39,7 @@ favicon = Image.open("images/favicon.ico")
 
 # Set page layout
 st.set_page_config(layout='wide', page_title="LLM Uncertainty", page_icon=favicon)
-st.logo("images/thoughworks-logo.svg")
+st.logo("images/thoughtworks-logo.svg")
 
 def display_metrics_and_charts(uncertainty_scores, completions, n):
     structural_uncertainty = np.mean([np.mean(x) for x in uncertainty_scores['entropies']])
